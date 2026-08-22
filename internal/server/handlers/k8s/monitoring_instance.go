@@ -16,6 +16,7 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/AlekSi/pointer"
@@ -72,7 +73,10 @@ func (h *k8sHandler) DeleteMonitoringInstance(ctx context.Context, namespace, na
 			Namespace: namespace,
 		},
 	}
-	return h.kubeConnector.DeleteSecret(ctx, delSecObj)
+	if err := h.kubeConnector.DeleteSecret(ctx, delSecObj); ctrlclient.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to delete secret for monitoring instance %q: %w", name, err)
+	}
+	return nil
 }
 
 func (h *k8sHandler) GetMonitoringInstance(ctx context.Context, namespace, name string) (*everestv1alpha1.MonitoringConfig, error) {
@@ -109,7 +113,7 @@ func (h *k8sHandler) UpdateMonitoringInstance(ctx context.Context, namespace, na
 			StringData: h.monitoringConfigSecretData(apiKey),
 		})
 		if err != nil {
-			return nil, fmt.Errorf("could not update k8s secret %s", name)
+			return nil, fmt.Errorf("could not update k8s secret %s: %w", name, err)
 		}
 	}
 	if req.Url != "" {
@@ -154,10 +158,10 @@ func (h *k8sHandler) createMonitoringK8sResources(
 		if k8serrors.IsAlreadyExists(err) {
 			_, err = h.kubeConnector.UpdateSecret(c, secret)
 			if err != nil {
-				return nil, fmt.Errorf("could not update k8s secret %s", params.Name)
+				return nil, fmt.Errorf("could not update k8s secret %s: %w", params.Name, err)
 			}
 		} else {
-			return nil, fmt.Errorf("failed creating secret in the Kubernetes cluster")
+			return nil, fmt.Errorf("failed creating secret in the Kubernetes cluster: %w", err)
 		}
 	}
 	created, err := h.kubeConnector.CreateMonitoringConfig(c, &everestv1alpha1.MonitoringConfig{
@@ -182,7 +186,7 @@ func (h *k8sHandler) createMonitoringK8sResources(
 			},
 		}
 		if dErr := h.kubeConnector.DeleteSecret(c, delObj); dErr != nil {
-			return nil, fmt.Errorf("failed cleaning up the secret because failed creating monitoring instance")
+			return nil, fmt.Errorf("failed cleaning up secret after failed monitoring instance creation: %w", errors.Join(err, dErr))
 		}
 		return nil, err
 	}
